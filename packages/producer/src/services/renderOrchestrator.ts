@@ -148,7 +148,11 @@ export interface RenderConfig {
   producerConfig?: EngineConfig;
   /** Custom logger. Defaults to console-based defaultLogger. */
   logger?: ProducerLogger;
-  /** HDR output: "hlg", "pq", "auto" (detect from sources), or undefined (SDR). */
+  /** Enable HDR color space probing on video/image sources. When true, the
+   *  pipeline probes each source with ffprobe and auto-detects PQ/HLG for
+   *  HDR output. When false (default), probing is skipped for zero overhead
+   *  on SDR compositions. */
+  hdr?: boolean;
 }
 
 export interface RenderPerfSummary {
@@ -833,10 +837,11 @@ export async function executeRenderJob(
 
     // Probe ORIGINAL color spaces before extraction (which may convert SDR→HDR).
     // This is needed to identify which videos are natively HDR vs converted-SDR
-    // for the two-pass compositing path.
+    // for the two-pass compositing path. Gated by --hdr flag to avoid ffprobe
+    // overhead on SDR-only compositions.
     const nativeHdrVideoIds = new Set<string>();
     const videoTransfers = new Map<string, HdrTransfer>();
-    if (composition.videos.length > 0) {
+    if (job.config.hdr && composition.videos.length > 0) {
       await Promise.all(
         composition.videos.map(async (v) => {
           let videoPath = v.src;
@@ -901,11 +906,10 @@ export async function executeRenderJob(
     }
 
     // ── HDR auto-detection ──────────────────────────────────────────────
-    // Check if any extracted video source has HDR color space. If so, the
-    // output automatically uses H.265 10-bit with HLG metadata. No flag needed.
+    // When --hdr is set, check extracted video metadata for HDR color spaces.
+    // If found, the output uses H.265 10-bit with HLG/PQ metadata.
     let effectiveHdr: { transfer: HdrTransfer } | undefined;
-    if (frameLookup) {
-      // Check extracted video metadata for HDR color spaces
+    if (job.config.hdr && frameLookup) {
       for (const ext of extractionResult?.extracted ?? []) {
         if (isHdrColorSpace(ext.metadata.colorSpace)) {
           effectiveHdr = { transfer: detectTransfer(ext.metadata.colorSpace) };

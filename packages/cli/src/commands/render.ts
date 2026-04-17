@@ -9,6 +9,7 @@ export const examples: Example[] = [
   ["High quality at 60fps", "hyperframes render --fps 60 --quality high --output hd.mp4"],
   ["Deterministic render via Docker", "hyperframes render --docker --output deterministic.mp4"],
   ["Parallel rendering with 6 workers", "hyperframes render --workers 6 --output fast.mp4"],
+  ["HDR output (H.265 10-bit)", "hyperframes render --hdr --output hdr-output.mp4"],
 ];
 import { cpus, freemem, tmpdir } from "node:os";
 import { resolve, dirname, join, basename } from "node:path";
@@ -77,6 +78,11 @@ export default defineCommand({
     docker: {
       type: "boolean",
       description: "Use Docker for deterministic render",
+      default: false,
+    },
+    hdr: {
+      type: "boolean",
+      description: "Enable HDR: probe sources for PQ/HLG, output H.265 10-bit BT.2020",
       default: false,
     },
     gpu: { type: "boolean", description: "Use GPU encoding", default: false },
@@ -274,6 +280,7 @@ export default defineCommand({
         format,
         workers: workerCount,
         gpu: useGpu,
+        hdr: args.hdr ?? false,
         quiet,
         browserPath,
       });
@@ -287,6 +294,7 @@ interface RenderOptions {
   format: "mp4" | "webm" | "mov";
   workers: number;
   gpu: boolean;
+  hdr: boolean;
   quiet: boolean;
   browserPath?: string;
 }
@@ -484,6 +492,7 @@ async function renderLocal(
     format: options.format,
     workers: options.workers,
     useGpu: options.gpu,
+    hdr: options.hdr,
   });
 
   const onProgress = options.quiet
