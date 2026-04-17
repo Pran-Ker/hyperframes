@@ -118,6 +118,61 @@ export function linearToHdr(buf: Buffer, transfer: "pq" | "hlg"): void {
   }
 }
 
+// ── Cross-transfer conversion (HLG↔PQ) ──────────────────────────────────────
+// HLG is scene-referred, PQ is display-referred. Converting between them
+// requires the OOTF (Optical-Optical Transfer Function) which maps scene
+// light to display light. Per BT.2100, the HLG OOTF for a reference
+// display at Lw nits is: Y_display = Lw * Y_scene^gamma, where
+// gamma = 1.2 * 1.111^(log2(Lw/1000)). At 1000 nits: gamma = 1.2.
+//
+// The per-channel approximation (applying gamma per-channel rather than
+// on luminance Y) introduces slight color shifts but avoids a full
+// colorimetric conversion with BT.2020 luma coefficients.
+
+const HLG_OOTF_LW = 1000; // reference display peak luminance (nits)
+const HLG_OOTF_GAMMA = 1.2 * Math.pow(1.111, Math.log2(HLG_OOTF_LW / 1000));
+
+/** HLG scene light → PQ display light (per-channel, normalized to 10000 nits) */
+function hlgSceneToPqDisplay(sceneLinear: number): number {
+  const displayNits = HLG_OOTF_LW * Math.pow(Math.max(0, sceneLinear), HLG_OOTF_GAMMA);
+  return displayNits / 10000; // PQ is normalized to 10000 nits
+}
+
+/** PQ display light → HLG scene light (inverse OOTF) */
+function pqDisplayToHlgScene(displayNormalized: number): number {
+  const displayNits = displayNormalized * 10000;
+  return Math.pow(Math.max(0, displayNits / HLG_OOTF_LW), 1 / HLG_OOTF_GAMMA);
+}
+
+let hlgToPqLut: Uint16Array | null = null;
+let pqToHlgLut: Uint16Array | null = null;
+
+function getHlgToPqLut(): Uint16Array {
+  // HLG signal → scene linear (EOTF) → display linear (OOTF) → PQ signal (OETF)
+  if (!hlgToPqLut) hlgToPqLut = buildLut((v) => pqOetf(hlgSceneToPqDisplay(hlgEotf(v))));
+  return hlgToPqLut;
+}
+function getPqToHlgLut(): Uint16Array {
+  // PQ signal → display linear (EOTF) → scene linear (inverse OOTF) → HLG signal (OETF)
+  if (!pqToHlgLut) pqToHlgLut = buildLut((v) => hlgOetf(pqDisplayToHlgScene(pqEotf(v))));
+  return pqToHlgLut;
+}
+
+/**
+ * Convert an rgb48le buffer between HDR transfer functions, in-place.
+ * Uses a composite 65536-entry LUT (source EOTF → linear → target OETF)
+ * for O(1) per-sample conversion. No-op if from === to.
+ */
+export function convertTransfer(buf: Buffer, from: "pq" | "hlg", to: "pq" | "hlg"): void {
+  if (from === to) return;
+  const lut = from === "hlg" ? getHlgToPqLut() : getPqToHlgLut();
+  const len = buf.length / 2;
+  for (let i = 0; i < len; i++) {
+    const off = i * 2;
+    buf.writeUInt16LE(lut[buf.readUInt16LE(off)] ?? 0, off);
+  }
+}
+
 // ── Buffer sampling ───────────────────────────────────────────────────────────
 
 /**

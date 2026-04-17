@@ -11,6 +11,7 @@ import {
   flashThroughWhite,
   hdrToLinear,
   linearToHdr,
+  convertTransfer,
   TRANSITIONS,
   type TransitionFn,
 } from "./shaderTransitions.js";
@@ -477,4 +478,43 @@ describe("hdrToLinear / linearToHdr", () => {
       });
     });
   }
+});
+
+// ── convertTransfer (HLG↔PQ) ─────────────────────────────────────────────
+
+describe("convertTransfer", () => {
+  it("no-op when from === to", () => {
+    const buf = Buffer.alloc(6);
+    buf.writeUInt16LE(32768, 0);
+    buf.writeUInt16LE(16384, 2);
+    buf.writeUInt16LE(8192, 4);
+    const original = Buffer.from(buf);
+    convertTransfer(buf, "pq", "pq");
+    expect(buf.equals(original)).toBe(true);
+  });
+
+  it("hlg→pq→hlg roundtrip preserves mid-high values", () => {
+    const values = [16384, 32768, 50000, 65535];
+    const buf = Buffer.alloc(values.length * 2);
+    for (let i = 0; i < values.length; i++) {
+      buf.writeUInt16LE(values[i] ?? 0, i * 2);
+    }
+    const original = Buffer.from(buf);
+    convertTransfer(buf, "hlg", "pq");
+    expect(buf.equals(original)).toBe(false);
+    convertTransfer(buf, "pq", "hlg");
+    for (let i = 0; i < values.length; i++) {
+      const got = buf.readUInt16LE(i * 2);
+      const want = original.readUInt16LE(i * 2);
+      expect(Math.abs(got - want)).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it("hlg→pq produces different values", () => {
+    const buf = Buffer.alloc(2);
+    buf.writeUInt16LE(32768, 0);
+    const before = buf.readUInt16LE(0);
+    convertTransfer(buf, "hlg", "pq");
+    expect(buf.readUInt16LE(0)).not.toBe(before);
+  });
 });

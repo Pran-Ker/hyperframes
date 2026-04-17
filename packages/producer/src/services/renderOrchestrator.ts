@@ -73,6 +73,7 @@ import {
   parseTransformMatrix,
   TRANSITIONS,
   crossfade,
+  convertTransfer,
   type TransitionFn,
   type ElementStackingInfo,
 } from "@hyperframes/engine";
@@ -341,6 +342,8 @@ function blitHdrVideoLayer(
   width: number,
   height: number,
   log?: ProducerLogger,
+  sourceTransfer?: HdrTransfer,
+  targetTransfer?: HdrTransfer,
 ): void {
   const frameDir = hdrFrameDirs.get(el.id);
   const video = videos.find((v) => v.id === el.id);
@@ -369,6 +372,11 @@ function blitHdrVideoLayer(
 
   try {
     const { data: hdrRgb, width: srcW, height: srcH } = decodePngToRgb48le(readFileSync(framePath));
+
+    // Convert between HDR transfer functions if source doesn't match output
+    if (sourceTransfer && targetTransfer && sourceTransfer !== targetTransfer) {
+      convertTransfer(hdrRgb, sourceTransfer, targetTransfer);
+    }
 
     const viewportMatrix = parseTransformMatrix(el.transform);
 
@@ -827,6 +835,7 @@ export async function executeRenderJob(
     // This is needed to identify which videos are natively HDR vs converted-SDR
     // for the two-pass compositing path.
     const nativeHdrVideoIds = new Set<string>();
+    const videoTransfers = new Map<string, HdrTransfer>();
     if (composition.videos.length > 0) {
       await Promise.all(
         composition.videos.map(async (v) => {
@@ -841,6 +850,7 @@ export async function executeRenderJob(
           const meta = await extractVideoMetadata(videoPath);
           if (isHdrColorSpace(meta.colorSpace)) {
             nativeHdrVideoIds.add(v.id);
+            videoTransfers.set(v.id, detectTransfer(meta.colorSpace));
           }
         }),
       );
@@ -1211,6 +1221,8 @@ export async function executeRenderJob(
                 width,
                 height,
                 log,
+                videoTransfers.get(layer.element.id),
+                effectiveHdr?.transfer,
               );
             } else {
               // DOM layer: capture only elements in this layer.
@@ -1331,6 +1343,8 @@ export async function executeRenderJob(
                   width,
                   height,
                   log,
+                  videoTransfers.get(el.id),
+                  effectiveHdr?.transfer,
                 );
               }
 

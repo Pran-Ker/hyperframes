@@ -178,6 +178,7 @@ export {
   sampleRgb48le,
   hdrToLinear,
   linearToHdr,
+  convertTransfer,
 } from "./utils/shaderTransitions.js";
 
 export {
